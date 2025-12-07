@@ -13,6 +13,8 @@ import android.content.res.AssetManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.view.Window;
 import android.view.WindowManager;
 import android.webkit.ValueCallback;
@@ -57,7 +59,7 @@ public class MainActivity extends AppCompatActivity {
         System.loadLibrary("native-lib");
         System.loadLibrary("node");
     }
-    public static boolean _startedNodeAlready=false;    //We just want one instance of node running in the background.
+    public static boolean _startedNodeAlready=false;
     private ActivityMainBinding binding;
     private Socket mSocket;
 
@@ -69,6 +71,9 @@ public class MainActivity extends AppCompatActivity {
     private WebView myWebView;
 
     Client[] clients = new Client[128];
+    
+    private ServerAdapter serverAdapter;
+    private EditText searchEditText;
 
 
     @Override
@@ -82,13 +87,6 @@ public class MainActivity extends AppCompatActivity {
         }
         catch (NullPointerException e){}
 
-       /* View decorView = getWindow().getDecorView();
-        int uiOptions = View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                | View.SYSTEM_UI_FLAG_FULLSCREEN
-                | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
-        decorView.setSystemUiVisibility(uiOptions);
-*/
         setContentView(R.layout.activity_main);
 
         //starts node js
@@ -97,17 +95,13 @@ public class MainActivity extends AppCompatActivity {
             new Thread(new Runnable() {
                 @Override
                 public void run() {
-                    //The path where we expect the node project to be at runtime.
                     String nodeDir=getApplicationContext().getFilesDir().getAbsolutePath()+"/nodejs-project";
                     if (wasAPKUpdated()) {
-                        //Recursively delete any existing nodejs-project.
                         File nodeDirReference=new File(nodeDir);
                         if (nodeDirReference.exists()) {
                             deleteFolderRecursively(new File(nodeDir));
                         }
-                        //Copy the node project from assets into the application's data path.
                         copyAssetFolder(getApplicationContext().getAssets(), "nodejs-project", nodeDir);
-
                         saveLastUpdateTime();
                     }
                     startNodeWithArguments(new String[]{"node",
@@ -117,23 +111,32 @@ public class MainActivity extends AppCompatActivity {
             }).start();
         }
 
-
-
-
         try {
-            mSocket = IO.socket("http://localhost:3000"); // IP adresa pro emulator, změňte na IP serveru při testování na skutečném zařízení
+            mSocket = IO.socket("http://localhost:3000");
             mSocket.connect();
             mSocket.on("getMasters", onGetMasters);
             mSocket.on("chatMessage", onNewMessage);
             mSocket.on("snapshot", onSnapshot);
-
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
 
+        //Search EditText
+        searchEditText = findViewById(R.id.searchEditText);
+        searchEditText.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
 
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                if (serverAdapter != null) {
+                    serverAdapter.filter(s.toString());
+                }
+            }
 
-
+            @Override
+            public void afterTextChanged(Editable s) {}
+        });
 
         //Connect button
         final Button buttonVersions = (Button) findViewById(R.id.btVersions);
@@ -141,17 +144,13 @@ public class MainActivity extends AppCompatActivity {
             if (selectedServer != null) {
                 JSONObject communicationData = new JSONObject();
                 try {
-                    // Předpokládá se, že Server má metody pro získání IP a portu
                     communicationData.put("address", selectedServer.getAddresses());
                     mSocket.emit("communication", communicationData);
-
                     switchToIngameView();
-
                 } catch (JSONException e) {
                     e.printStackTrace();
                 }
             } else {
-                //ask for masters
                 try {
                     JSONObject getMasters = new JSONObject();
                     getMasters.put("getMasters", "getMasters");
@@ -159,23 +158,17 @@ public class MainActivity extends AppCompatActivity {
                 } catch (JSONException e) {
                     e.printStackTrace();
                 }
-
             }
         });
     }
 
-
-
     private void switchToIngameView() {
         setContentView(R.layout.ingame);
 
-        // Inicializace RecyclerView a jeho adapteru
         messageAdapter = new MessageAdapter(this, messages);
         messagesView = findViewById(R.id.chatRecyclerView);
         messagesView.setLayoutManager(new LinearLayoutManager(this));
         messagesView.setAdapter(messageAdapter);
-
-
 
         //Send Message button
         final Button sendMessageButton = (Button) findViewById(R.id.sendButton);
@@ -185,75 +178,42 @@ public class MainActivity extends AppCompatActivity {
 
             try {
                 JSONObject sendMessage = new JSONObject();
-
                 sendMessage.put("sendMessage", message);
                 mSocket.emit("communication", sendMessage);
                 editText.setText("");
-
             } catch (JSONException e) {
                 e.printStackTrace();
             }
         });
 
-
-
         // webview
         myWebView = (WebView) findViewById(R.id.webview);
         WebSettings webSettings = myWebView.getSettings();
         webSettings.setJavaScriptEnabled(true);
-        WebView.setWebContentsDebuggingEnabled(true);//xtodo asi vypnout před publish
+        WebView.setWebContentsDebuggingEnabled(true);
         myWebView.setWebViewClient(new WebViewClient() {
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
-                        myWebView.evaluateJavascript(javascript.init, null);
-
+                myWebView.evaluateJavascript(javascript.init, null);
             }
         });
 
-        myWebView.loadUrl("https://ddnet.org/mappreview/?map=HDP_Obstaculos");
-
-
-
-
-
+        // Используем название карты из выбранного сервера
+        String mapName = "HDP_Obstaculos"; // Значение по умолчанию
+        if (selectedServer != null && selectedServer.getInfo() != null && 
+            selectedServer.getInfo().getMap() != null && 
+            selectedServer.getInfo().getMap().getName() != null) {
+            mapName = selectedServer.getInfo().getMap().getName();
+        }
+        
+        myWebView.loadUrl("https://ddnet.org/mappreview/?map=" + mapName);
     }
 
     private Emitter.Listener onSnapshot = args -> runOnUiThread(() -> {
-
-
         try {
             myWebView.evaluateJavascript("updateSnapshot("+args[0]+")",null);
-
-            //parsing clients/snapshot to java
-            /*
-                   JSONArray data = (JSONArray) args[0];
-        Gson gson = new GsonBuilder()
-                .serializeNulls() // Přidává null hodnoty do JSONu při serializaci. Při deserializaci Gson implicitně nastavuje na null, pokud klíč chybí.
-                .create();
-
-            for (int id = 0; id < data.length(); id++) {
-                JSONObject snapshotObj = data.getJSONObject(id);
-
-
-                //parsing clients/snapshot to java
-                if (snapshotObj.has("ClientInfo") && snapshotObj.getJSONObject("ClientInfo").length() > 0) {
-
-                    ClientInfo clientInfo = gson.fromJson(snapshotObj.getJSONObject("ClientInfo").toString(), ClientInfo.class);
-                    PlayerInfo playerInfo = gson.fromJson(snapshotObj.getJSONObject("PlayerInfo").toString(), PlayerInfo.class);
-                    Character character = null;
-                    if (snapshotObj.has("Character") && snapshotObj.getJSONObject("Character").length() > 0) {
-                        character = gson.fromJson(snapshotObj.getJSONObject("Character").toString(), Character.class);
-                    }
-
-                    Client newSnapshot = new Client(clientInfo, playerInfo, character);
-
-                    //update existing snapshots
-                        clients[id] = newSnapshot;
-                    }
-            }*/
         } catch (Exception e) {
-
         }
     });
 
@@ -262,25 +222,18 @@ public class MainActivity extends AppCompatActivity {
         public void call(final Object... args) {
             runOnUiThread(() -> {
                 JSONObject data = (JSONObject) args[0];
-
-                // Zpracujte data a přidejte zprávu do seznamu
                 try {
                     String messageText = data.getString("message");
-                    String authorName = data.optJSONObject("author").optJSONObject("ClientInfo").optString("name", "Neznámý");
+                    String authorName = data.optJSONObject("author").optJSONObject("ClientInfo").optString("name", "Unknown");
                     Message message = new Message(messageText, authorName);
                     messages.add(message);
                     messageAdapter.notifyItemInserted(messages.size() - 1);
                     messagesView.scrollToPosition(messages.size() - 1);
-
                 } catch (Exception e) {
-
                 }
-
-
             });
         }
     };
-
 
     private Emitter.Listener onGetMasters = args -> runOnUiThread(new Runnable() {
         @Override
@@ -293,23 +246,21 @@ public class MainActivity extends AppCompatActivity {
                 };
 
                 PriorityQueue<Server> serverQueue = new PriorityQueue<>(serverComparator);
-
-
-                //List<Server> servers = new ArrayList<>();
                 JSONObject jsonObject =  (JSONObject) args[0];
-                JSONArray serversArray = null;
-
-                serversArray = jsonObject.getJSONArray("servers");
-
+                JSONArray serversArray = jsonObject.getJSONArray("servers");
 
                 for (int i = 0; i < serversArray.length(); i++) {
                     JSONObject serverObj = serversArray.getJSONObject(i);
                     Server server = new Server();
                     server.setAddresses(getListFromStringJSONArray(serverObj.getJSONArray("addresses")));
+                    
+                    // Парсим локацию
+                    if (serverObj.has("location")) {
+                        server.setLocation(serverObj.getString("location"));
+                    }
+                    
                     server.setInfo(parseServerInfo(serverObj.getJSONObject("info")));
                     serverQueue.add(server);
-
-                    //servers.add(server);
                 }
 
                 List<Server> sortedServers = new ArrayList<>();
@@ -317,41 +268,24 @@ public class MainActivity extends AppCompatActivity {
                     sortedServers.add(serverQueue.poll());
                 }
                 setupRecyclerView(sortedServers);
-
             } catch (Exception e) {
                 String asd = e.toString();
             }
         }
     });
 
-
-
-
-
-
     private void setupRecyclerView(List<Server> servers) {
         RecyclerView recyclerView = findViewById(R.id.masterServers);
-        ServerAdapter adapter = new ServerAdapter(servers, new OnItemClickListener() {
+        serverAdapter = new ServerAdapter(servers, new OnItemClickListener() {
             @Override
             public void onItemClick(Server server) {
-                // Uložení vybraného serveru
                 selectedServer = server;
-                // Můžete zde zobrazit nějaké informace o vybraném serveru
             }
         });
 
         recyclerView.setLayoutManager(new LinearLayoutManager(this));
-        recyclerView.setAdapter(adapter);
+        recyclerView.setAdapter(serverAdapter);
     }
-
-
-
-
-
-
-
-
-
 
     private List<String> getListFromStringJSONArray(JSONArray jsonArray) throws JSONException {
         List<String> list = new ArrayList<>();
@@ -363,20 +297,51 @@ public class MainActivity extends AppCompatActivity {
 
     private Server.ServerInfo parseServerInfo(JSONObject infoObj) throws JSONException {
         Server.ServerInfo info = new Server.ServerInfo();
-        // Parse and set fields for ServerInfo
-        // Example:
         info.setName(infoObj.getString("name"));
-        // Continue for other fields...
-
+        
+        if (infoObj.has("game_type")) {
+            info.setGame_type(infoObj.getString("game_type"));
+        }
+        
+        if (infoObj.has("max_clients")) {
+            info.setMax_clients(infoObj.getInt("max_clients"));
+        }
+        
+        if (infoObj.has("max_players")) {
+            info.setMax_players(infoObj.getInt("max_players"));
+        }
+        
+        // Парсим карту
+        if (infoObj.has("map")) {
+            JSONObject mapObj = infoObj.getJSONObject("map");
+            Server.Map map = new Server.Map();
+            if (mapObj.has("name")) {
+                map.setName(mapObj.getString("name"));
+            }
+            info.setMap(map);
+        }
+        
+        // Парсим список игроков
+        if (infoObj.has("clients")) {
+            JSONArray clientsArray = infoObj.getJSONArray("clients");
+            List<Server.Client> clients = new ArrayList<>();
+            for (int i = 0; i < clientsArray.length(); i++) {
+                JSONObject clientObj = clientsArray.getJSONObject(i);
+                Server.Client client = new Server.Client();
+                if (clientObj.has("name")) {
+                    client.setName(clientObj.getString("name"));
+                }
+                clients.add(client);
+            }
+            info.setClients(clients);
+        }
+        
         return info;
     }
 
-
-
-
-
     //methods for node js
     public native Integer startNodeWithArguments(String[] arguments);
+    
     private boolean wasAPKUpdated() {
         SharedPreferences prefs = getApplicationContext().getSharedPreferences("NODEJS_MOBILE_PREFS", Context.MODE_PRIVATE);
         long previousLastUpdateTime = prefs.getLong("NODEJS_MOBILE_APK_LastUpdateTime", 0);
@@ -403,6 +368,7 @@ public class MainActivity extends AppCompatActivity {
         editor.putLong("NODEJS_MOBILE_APK_LastUpdateTime", lastUpdateTime);
         editor.commit();
     }
+    
     private static boolean deleteFolderRecursively(File file) {
         try {
             boolean res=true;
@@ -420,22 +386,18 @@ public class MainActivity extends AppCompatActivity {
             return false;
         }
     }
+    
     private static boolean copyAssetFolder(AssetManager assetManager, String fromAssetPath, String toPath) {
         try {
             String[] files = assetManager.list(fromAssetPath);
             boolean res = true;
 
             if (files.length==0) {
-                //If it's a file, it won't have any assets "inside" it.
-                res &= copyAsset(assetManager,
-                        fromAssetPath,
-                        toPath);
+                res &= copyAsset(assetManager, fromAssetPath, toPath);
             } else {
                 new File(toPath).mkdirs();
                 for (String file : files)
-                    res &= copyAssetFolder(assetManager,
-                            fromAssetPath + "/" + file,
-                            toPath + "/" + file);
+                    res &= copyAssetFolder(assetManager, fromAssetPath + "/" + file, toPath + "/" + file);
             }
             return res;
         } catch (Exception e) {
@@ -443,6 +405,7 @@ public class MainActivity extends AppCompatActivity {
             return false;
         }
     }
+    
     private static boolean copyAsset(AssetManager assetManager, String fromAssetPath, String toPath) {
         InputStream in = null;
         OutputStream out = null;
@@ -470,9 +433,4 @@ public class MainActivity extends AppCompatActivity {
             out.write(buffer, 0, read);
         }
     }
-
 }
-
-
-
-
