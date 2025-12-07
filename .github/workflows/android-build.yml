@@ -33,29 +33,33 @@ jobs:
     
     - name: Download and setup nodejs-mobile libraries
       run: |
-        echo "Downloading nodejs-mobile using GitHub API..."
+        echo "Installing jq for JSON parsing..."
+        sudo apt-get update -qq && sudo apt-get install -y jq
+        
+        echo "Downloading nodejs-mobile v18.20.4 using GitHub API..."
         mkdir -p nodejs-mobile-temp
         cd nodejs-mobile-temp
         
-        # Use GitHub API to get the download URL for the release
-        echo "Fetching release information from GitHub API..."
-        RELEASE_INFO=$(curl -s https://api.github.com/repos/nodejs-mobile/nodejs-mobile/releases/tags/nodejs-mobile-v18.14.0)
+        # Fetch release information with corrected tag name
+        echo "Fetching release for tag: nodejs-mobile-v18.20.4"
+        RELEASE_INFO=$(curl -s https://api.github.com/repos/nodejs-mobile/nodejs-mobile/releases/tags/nodejs-mobile-v18.20.4)
         
-        # Extract the download URL for android zip
-        DOWNLOAD_URL=$(echo $RELEASE_INFO | grep -o '"browser_download_url":"[^"]*android\.zip"' | cut -d'"' -f4 | head -1)
+        # Use jq to parse JSON and get the Android zip URL
+        DOWNLOAD_URL=$(echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name | contains("android.zip")) | .browser_download_url' | head -1)
         
-        if [ -z "$DOWNLOAD_URL" ]; then
-          echo "Failed to get download URL, trying v18.13.0..."
-          RELEASE_INFO=$(curl -s https://api.github.com/repos/nodejs-mobile/nodejs-mobile/releases/tags/nodejs-mobile-v18.13.0)
-          DOWNLOAD_URL=$(echo $RELEASE_INFO | grep -o '"browser_download_url":"[^"]*android\.zip"' | cut -d'"' -f4 | head -1)
+        if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
+          echo "v18.20.4 not found, trying v18.17.3..."
+          RELEASE_INFO=$(curl -s https://api.github.com/repos/nodejs-mobile/nodejs-mobile/releases/tags/nodejs-mobile-v18.17.3)
+          DOWNLOAD_URL=$(echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name | contains("android.zip")) | .browser_download_url' | head -1)
+        fi
+        
+        if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
+          echo "Error: Could not find download URL"
+          echo "API Response: $RELEASE_INFO"
+          exit 1
         fi
         
         echo "Download URL: $DOWNLOAD_URL"
-        
-        if [ -z "$DOWNLOAD_URL" ]; then
-          echo "Error: Could not find download URL"
-          exit 1
-        fi
         
         # Download the file
         echo "Downloading nodejs-mobile..."
@@ -68,11 +72,13 @@ jobs:
           exit 1
         fi
         
-        echo "File downloaded successfully, size: $(du -h nodejs-mobile.zip | cut -f1)"
-        echo "Extracting..."
-        unzip -q nodejs-mobile.zip
+        echo "File downloaded: $(du -h nodejs-mobile.zip | cut -f1)"
+        file nodejs-mobile.zip
         
-        echo "Listing extracted contents:"
+        echo "Extracting..."
+        unzip -q nodejs-mobile.zip || unzip nodejs-mobile.zip
+        
+        echo "Contents after extraction:"
         ls -la
         
         cd ..
@@ -84,23 +90,29 @@ jobs:
         
         echo "Finding extracted directory..."
         EXTRACTED_DIR=$(find nodejs-mobile-temp -maxdepth 1 -type d -name "nodejs-mobile-*-android" | head -1)
-        echo "Extracted directory: $EXTRACTED_DIR"
         
         if [ -z "$EXTRACTED_DIR" ]; then
-          echo "Error: Could not find extracted directory"
-          ls -la nodejs-mobile-temp/
-          exit 1
+          echo "Warning: Standard directory not found, searching for libnode.so files..."
+          find nodejs-mobile-temp -name "libnode.so" -type f
+          
+          # Try to find and copy directly
+          find nodejs-mobile-temp -path "*/armeabi-v7a/libnode.so" -exec cp {} app/libnode/bin/armeabi-v7a/ \; 2>/dev/null || echo "armeabi-v7a not found"
+          find nodejs-mobile-temp -path "*/arm64-v8a/libnode.so" -exec cp {} app/libnode/bin/arm64-v8a/ \;
+          find nodejs-mobile-temp -path "*/x86_64/libnode.so" -exec cp {} app/libnode/bin/x86_64/ \; 2>/dev/null || echo "x86_64 not found"
+        else
+          echo "Found directory: $EXTRACTED_DIR"
+          cp "$EXTRACTED_DIR/bin/armeabi-v7a/libnode.so" app/libnode/bin/armeabi-v7a/ 2>/dev/null || echo "armeabi-v7a not found"
+          cp "$EXTRACTED_DIR/bin/arm64-v8a/libnode.so" app/libnode/bin/arm64-v8a/
+          cp "$EXTRACTED_DIR/bin/x86_64/libnode.so" app/libnode/bin/x86_64/ 2>/dev/null || echo "x86_64 not found"
         fi
         
-        echo "Copying libnode.so files..."
-        cp "$EXTRACTED_DIR/bin/armeabi-v7a/libnode.so" app/libnode/bin/armeabi-v7a/ 2>/dev/null || echo "Note: armeabi-v7a not found"
-        cp "$EXTRACTED_DIR/bin/arm64-v8a/libnode.so" app/libnode/bin/arm64-v8a/
-        cp "$EXTRACTED_DIR/bin/x86_64/libnode.so" app/libnode/bin/x86_64/ 2>/dev/null || echo "Note: x86_64 not found"
-        
         echo "Verifying copied files:"
-        ls -lh app/libnode/bin/*/libnode.so
+        ls -lh app/libnode/bin/*/libnode.so || {
+          echo "Error: No libnode.so files were copied!"
+          exit 1
+        }
         
-        echo "nodejs-mobile libraries setup complete!"
+        echo "✅ nodejs-mobile libraries setup complete!"
     
     - name: Cache Gradle packages
       uses: actions/cache@v3
@@ -117,7 +129,7 @@ jobs:
     
     - name: Build Debug APK
       run: |
-        echo "Starting Gradle build..."
+        echo "🔨 Starting Gradle build..."
         ./gradlew assembleDebug --stacktrace
     
     - name: Upload APK
@@ -133,5 +145,5 @@ jobs:
       run: |
         echo "✅ APK successfully built!"
         echo "📦 Size: $(du -h app/build/outputs/apk/debug/app-debug.apk | cut -f1)"
-        echo "📍 Location: app/build/outputs/apk/debug/app-debug.apk"
+        echo "📍 Download from Artifacts above"
         ls -lh app/build/outputs/apk/debug/app-debug.apk
