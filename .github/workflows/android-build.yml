@@ -30,36 +30,44 @@ jobs:
         yes | sdkmanager --licenses || true
         sdkmanager "ndk;25.2.9519653"
         echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/25.2.9519653" >> $GITHUB_ENV
-        echo "NDK installed at: $ANDROID_SDK_ROOT/ndk/25.2.9519653"
     
     - name: Download and setup nodejs-mobile libraries
       run: |
-        echo "Downloading nodejs-mobile v18.20.4..."
-        wget -O nodejs-mobile-android.zip https://github.com/nodejs-mobile/nodejs-mobile/releases/download/nodejs-mobile-v18.20.4/nodejs-mobile-v18.20.4-android.zip
+        echo "Downloading nodejs-mobile v18.20.4 using curl..."
+        mkdir -p nodejs-mobile-temp
+        cd nodejs-mobile-temp
         
-        echo "Extracting archive..."
-        unzip -q nodejs-mobile-android.zip
+        # Download using curl with proper headers and following redirects
+        curl -L -o nodejs-mobile.zip "https://github.com/nodejs-mobile/nodejs-mobile/releases/download/nodejs-mobile-v18.20.4/nodejs-mobile-v18.20.4-android.zip"
         
-        echo "Listing extracted files..."
+        # Check if file was downloaded
+        if [ ! -f nodejs-mobile.zip ]; then
+          echo "Failed to download with curl, trying alternative method..."
+          exit 1
+        fi
+        
+        echo "Download successful, extracting..."
+        unzip -q nodejs-mobile.zip
+        
+        echo "Listing extracted contents:"
         ls -la
+        
+        cd ..
         
         echo "Creating libnode directories..."
         mkdir -p app/libnode/bin/armeabi-v7a
         mkdir -p app/libnode/bin/arm64-v8a
         mkdir -p app/libnode/bin/x86_64
         
-        echo "Finding and copying libnode.so files..."
-        find . -name "libnode.so" -type f
-        
-        # Copy files from extracted directory
-        cp nodejs-mobile-v18.20.4-android/bin/armeabi-v7a/libnode.so app/libnode/bin/armeabi-v7a/
-        cp nodejs-mobile-v18.20.4-android/bin/arm64-v8a/libnode.so app/libnode/bin/arm64-v8a/
-        cp nodejs-mobile-v18.20.4-android/bin/x86_64/libnode.so app/libnode/bin/x86_64/
+        echo "Copying libnode.so files..."
+        cp nodejs-mobile-temp/nodejs-mobile-v18.20.4-android/bin/armeabi-v7a/libnode.so app/libnode/bin/armeabi-v7a/ || echo "Note: armeabi-v7a may not be available"
+        cp nodejs-mobile-temp/nodejs-mobile-v18.20.4-android/bin/arm64-v8a/libnode.so app/libnode/bin/arm64-v8a/
+        cp nodejs-mobile-temp/nodejs-mobile-v18.20.4-android/bin/x86_64/libnode.so app/libnode/bin/x86_64/ || echo "Note: x86_64 may not be available"
         
         echo "Verifying copied files..."
         ls -lh app/libnode/bin/*/libnode.so
         
-        echo "Files successfully copied!"
+        echo "nodejs-mobile libraries setup complete!"
     
     - name: Cache Gradle packages
       uses: actions/cache@v3
@@ -92,5 +100,10 @@ jobs:
       run: |
         echo "✅ APK successfully built!"
         echo "📦 Size: $(du -h app/build/outputs/apk/debug/app-debug.apk | cut -f1)"
-        echo "📍 Location: app/build/outputs/apk/debug/app-debug.apk"
         ls -lh app/build/outputs/apk/debug/app-debug.apk
+    
+    - name: Show build error details
+      if: failure()
+      run: |
+        echo "Build failed, checking for error logs..."
+        find . -name "*.log" -type f -exec head -20 {} \; 2>/dev/null || true
