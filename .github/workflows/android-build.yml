@@ -28,43 +28,38 @@ jobs:
       run: |
         echo "Installing NDK..."
         yes | sdkmanager --licenses || true
-        sdkmanager "ndk;25.1.8937393" || sdkmanager "ndk;25.2.9519653"
-        NDK_PATH=$(ls -d $ANDROID_SDK_ROOT/ndk/* | head -n 1)
-        echo "ANDROID_NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
-        echo "NDK installed at: $NDK_PATH"
+        sdkmanager "ndk;25.2.9519653"
+        echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/25.2.9519653" >> $GITHUB_ENV
+        echo "NDK installed at: $ANDROID_SDK_ROOT/ndk/25.2.9519653"
     
     - name: Download and setup nodejs-mobile libraries
       run: |
-        echo "Downloading nodejs-mobile libraries..."
-        wget -q https://github.com/nodejs-mobile/nodejs-mobile/releases/download/nodejs-mobile-v18.17.1/nodejs-mobile-v18.17.1-android.zip || {
-          echo "Failed to download nodejs-mobile, trying alternative version..."
-          wget -q https://github.com/nodejs-mobile/nodejs-mobile/releases/download/nodejs-mobile-v18.14.0/nodejs-mobile-v18.14.0-android.zip
-          mv nodejs-mobile-v18.14.0-android.zip nodejs-mobile-v18.17.1-android.zip
-        }
+        echo "Downloading nodejs-mobile v18.20.4..."
+        wget -O nodejs-mobile-android.zip https://github.com/nodejs-mobile/nodejs-mobile/releases/download/nodejs-mobile-v18.20.4/nodejs-mobile-v18.20.4-android.zip
         
         echo "Extracting archive..."
-        unzip -q nodejs-mobile-v18.17.1-android.zip || unzip nodejs-mobile-v18.17.1-android.zip
+        unzip -q nodejs-mobile-android.zip
+        
+        echo "Listing extracted files..."
+        ls -la
         
         echo "Creating libnode directories..."
         mkdir -p app/libnode/bin/armeabi-v7a
         mkdir -p app/libnode/bin/arm64-v8a
-        mkdir -p app/libnode/bin/x86
         mkdir -p app/libnode/bin/x86_64
         
-        echo "Finding libnode.so files..."
+        echo "Finding and copying libnode.so files..."
         find . -name "libnode.so" -type f
         
-        echo "Copying libnode.so files..."
-        EXTRACTED_DIR=$(find . -maxdepth 1 -type d -name "nodejs-mobile-*" | head -n 1)
-        echo "Using directory: $EXTRACTED_DIR"
-        
-        cp "$EXTRACTED_DIR/bin/armeabi-v7a/libnode.so" app/libnode/bin/armeabi-v7a/ || echo "Warning: armeabi-v7a not found"
-        cp "$EXTRACTED_DIR/bin/arm64-v8a/libnode.so" app/libnode/bin/arm64-v8a/ || echo "Warning: arm64-v8a not found"
-        cp "$EXTRACTED_DIR/bin/x86/libnode.so" app/libnode/bin/x86/ || echo "Warning: x86 not found"
-        cp "$EXTRACTED_DIR/bin/x86_64/libnode.so" app/libnode/bin/x86_64/ || echo "Warning: x86_64 not found"
+        # Copy files from extracted directory
+        cp nodejs-mobile-v18.20.4-android/bin/armeabi-v7a/libnode.so app/libnode/bin/armeabi-v7a/
+        cp nodejs-mobile-v18.20.4-android/bin/arm64-v8a/libnode.so app/libnode/bin/arm64-v8a/
+        cp nodejs-mobile-v18.20.4-android/bin/x86_64/libnode.so app/libnode/bin/x86_64/
         
         echo "Verifying copied files..."
-        ls -lh app/libnode/bin/*/libnode.so || echo "Some libraries may be missing"
+        ls -lh app/libnode/bin/*/libnode.so
+        
+        echo "Files successfully copied!"
     
     - name: Cache Gradle packages
       uses: actions/cache@v3
@@ -82,11 +77,7 @@ jobs:
     - name: Build Debug APK
       run: |
         echo "Starting Gradle build..."
-        ./gradlew assembleDebug --stacktrace --info || {
-          echo "Build failed, showing error details..."
-          cat app/build/outputs/logs/*.log 2>/dev/null || true
-          exit 1
-        }
+        ./gradlew assembleDebug --stacktrace
     
     - name: Upload APK
       if: success()
@@ -96,19 +87,10 @@ jobs:
         path: app/build/outputs/apk/debug/app-debug.apk
         retention-days: 30
     
-    - name: Upload build logs on failure
-      if: failure()
-      uses: actions/upload-artifact@v4
-      with:
-        name: build-logs
-        path: |
-          app/build/outputs/logs/
-          build/
-        retention-days: 7
-    
     - name: Build summary
       if: success()
       run: |
         echo "✅ APK successfully built!"
-        echo "📦 File: app-debug.apk"
+        echo "📦 Size: $(du -h app/build/outputs/apk/debug/app-debug.apk | cut -f1)"
+        echo "📍 Location: app/build/outputs/apk/debug/app-debug.apk"
         ls -lh app/build/outputs/apk/debug/app-debug.apk
