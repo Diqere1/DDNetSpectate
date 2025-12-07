@@ -1,0 +1,70 @@
+name: Android CI Build
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+    
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+    
+    - name: Install NDK
+      run: |
+        sdkmanager "ndk;25.1.8937393"
+        echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/25.1.8937393" >> $GITHUB_ENV
+    
+    - name: Download and setup nodejs-mobile libraries
+      run: |
+        echo "Downloading nodejs-mobile libraries..."
+        wget https://github.com/nodejs-mobile/nodejs-mobile/releases/download/nodejs-mobile-v18.17.1/nodejs-mobile-v18.17.1-android.zip
+        unzip -q nodejs-mobile-v18.17.1-android.zip
+        
+        echo "Creating libnode directories..."
+        mkdir -p app/libnode/bin/armeabi-v7a
+        mkdir -p app/libnode/bin/arm64-v8a
+        mkdir -p app/libnode/bin/x86
+        mkdir -p app/libnode/bin/x86_64
+        
+        echo "Copying libnode.so files..."
+        cp nodejs-mobile-v18.17.1-android/bin/armeabi-v7a/libnode.so app/libnode/bin/armeabi-v7a/
+        cp nodejs-mobile-v18.17.1-android/bin/arm64-v8a/libnode.so app/libnode/bin/arm64-v8a/
+        cp nodejs-mobile-v18.17.1-android/bin/x86/libnode.so app/libnode/bin/x86/
+        cp nodejs-mobile-v18.17.1-android/bin/x86_64/libnode.so app/libnode/bin/x86_64/
+        
+        echo "Verifying files..."
+        ls -lh app/libnode/bin/*/libnode.so
+    
+    - name: Grant execute permission for gradlew
+      run: chmod +x gradlew
+    
+    - name: Build Debug APK
+      run: ./gradlew assembleDebug --stacktrace
+    
+    - name: Upload APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: DDNetSpectate-debug
+        path: app/build/outputs/apk/debug/app-debug.apk
+        retention-days: 30
+    
+    - name: Upload APK info
+      run: |
+        echo "✅ APK successfully built!"
+        echo "📦 File: app-debug.apk"
+        ls -lh app/build/outputs/apk/debug/app-debug.apk
