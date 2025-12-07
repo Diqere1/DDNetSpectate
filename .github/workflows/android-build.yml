@@ -40,11 +40,11 @@ jobs:
         mkdir -p nodejs-mobile-temp
         cd nodejs-mobile-temp
         
-        # Correct tag is v18.20.4 (NOT nodejs-mobile-v18.20.4)
+        # Get release info
         echo "Fetching release for tag: v18.20.4"
         RELEASE_INFO=$(curl -s https://api.github.com/repos/nodejs-mobile/nodejs-mobile/releases/tags/v18.20.4)
         
-        # Use jq to parse JSON
+        # Extract download URL
         DOWNLOAD_URL=$(echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name | contains("android.zip")) | .browser_download_url' | head -1)
         
         if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
@@ -81,11 +81,12 @@ jobs:
         
         cd ..
         
-        # Create directories
-        echo "Creating libnode directories..."
-        mkdir -p app/libnode/bin/armeabi-v7a
-        mkdir -p app/libnode/bin/arm64-v8a
-        mkdir -p app/libnode/bin/x86_64
+        # Create directories in CORRECT path: src/main/cpp/libnode
+        echo "Creating libnode directories in src/main/cpp/libnode..."
+        mkdir -p app/src/main/cpp/libnode/bin/armeabi-v7a
+        mkdir -p app/src/main/cpp/libnode/bin/arm64-v8a
+        mkdir -p app/src/main/cpp/libnode/bin/x86
+        mkdir -p app/src/main/cpp/libnode/bin/x86_64
         
         # Find extracted directory
         echo "Finding extracted directory..."
@@ -94,19 +95,21 @@ jobs:
         if [ -z "$EXTRACTED_DIR" ]; then
           echo "Searching for libnode.so files..."
           find nodejs-mobile-temp -name "libnode.so"
-          find nodejs-mobile-temp -path "*/armeabi-v7a/libnode.so" -exec cp {} app/libnode/bin/armeabi-v7a/ \; 2>/dev/null || true
-          find nodejs-mobile-temp -path "*/arm64-v8a/libnode.so" -exec cp {} app/libnode/bin/arm64-v8a/ \;
-          find nodejs-mobile-temp -path "*/x86_64/libnode.so" -exec cp {} app/libnode/bin/x86_64/ \; 2>/dev/null || true
+          find nodejs-mobile-temp -path "*/armeabi-v7a/libnode.so" -exec cp {} app/src/main/cpp/libnode/bin/armeabi-v7a/ \; 2>/dev/null || true
+          find nodejs-mobile-temp -path "*/arm64-v8a/libnode.so" -exec cp {} app/src/main/cpp/libnode/bin/arm64-v8a/ \;
+          find nodejs-mobile-temp -path "*/x86/libnode.so" -exec cp {} app/src/main/cpp/libnode/bin/x86/ \; 2>/dev/null || true
+          find nodejs-mobile-temp -path "*/x86_64/libnode.so" -exec cp {} app/src/main/cpp/libnode/bin/x86_64/ \; 2>/dev/null || true
         else
           echo "Found: $EXTRACTED_DIR"
-          cp "$EXTRACTED_DIR/bin/armeabi-v7a/libnode.so" app/libnode/bin/armeabi-v7a/ 2>/dev/null || true
-          cp "$EXTRACTED_DIR/bin/arm64-v8a/libnode.so" app/libnode/bin/arm64-v8a/
-          cp "$EXTRACTED_DIR/bin/x86_64/libnode.so" app/libnode/bin/x86_64/ 2>/dev/null || true
+          cp "$EXTRACTED_DIR/bin/armeabi-v7a/libnode.so" app/src/main/cpp/libnode/bin/armeabi-v7a/ 2>/dev/null || true
+          cp "$EXTRACTED_DIR/bin/arm64-v8a/libnode.so" app/src/main/cpp/libnode/bin/arm64-v8a/
+          cp "$EXTRACTED_DIR/bin/x86/libnode.so" app/src/main/cpp/libnode/bin/x86/ 2>/dev/null || true
+          cp "$EXTRACTED_DIR/bin/x86_64/libnode.so" app/src/main/cpp/libnode/bin/x86_64/ 2>/dev/null || true
         fi
         
         # Verify
-        echo "Verifying..."
-        ls -lh app/libnode/bin/*/libnode.so || {
+        echo "Verifying copied files:"
+        ls -lh app/src/main/cpp/libnode/bin/*/libnode.so || {
           echo "Error: No files copied!"
           exit 1
         }
