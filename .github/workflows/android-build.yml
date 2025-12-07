@@ -33,20 +33,43 @@ jobs:
     
     - name: Download and setup nodejs-mobile libraries
       run: |
-        echo "Downloading nodejs-mobile v18.20.4 using curl..."
+        echo "Downloading nodejs-mobile using GitHub API..."
         mkdir -p nodejs-mobile-temp
         cd nodejs-mobile-temp
         
-        # Download using curl with proper headers and following redirects
-        curl -L -o nodejs-mobile.zip "https://github.com/nodejs-mobile/nodejs-mobile/releases/download/nodejs-mobile-v18.20.4/nodejs-mobile-v18.20.4-android.zip"
+        # Use GitHub API to get the download URL for the release
+        echo "Fetching release information from GitHub API..."
+        RELEASE_INFO=$(curl -s https://api.github.com/repos/nodejs-mobile/nodejs-mobile/releases/tags/nodejs-mobile-v18.14.0)
         
-        # Check if file was downloaded
-        if [ ! -f nodejs-mobile.zip ]; then
-          echo "Failed to download with curl, trying alternative method..."
+        # Extract the download URL for android zip
+        DOWNLOAD_URL=$(echo $RELEASE_INFO | grep -o '"browser_download_url":"[^"]*android\.zip"' | cut -d'"' -f4 | head -1)
+        
+        if [ -z "$DOWNLOAD_URL" ]; then
+          echo "Failed to get download URL, trying v18.13.0..."
+          RELEASE_INFO=$(curl -s https://api.github.com/repos/nodejs-mobile/nodejs-mobile/releases/tags/nodejs-mobile-v18.13.0)
+          DOWNLOAD_URL=$(echo $RELEASE_INFO | grep -o '"browser_download_url":"[^"]*android\.zip"' | cut -d'"' -f4 | head -1)
+        fi
+        
+        echo "Download URL: $DOWNLOAD_URL"
+        
+        if [ -z "$DOWNLOAD_URL" ]; then
+          echo "Error: Could not find download URL"
           exit 1
         fi
         
-        echo "Download successful, extracting..."
+        # Download the file
+        echo "Downloading nodejs-mobile..."
+        curl -L -o nodejs-mobile.zip "$DOWNLOAD_URL"
+        
+        # Verify download
+        if [ ! -f nodejs-mobile.zip ] || [ ! -s nodejs-mobile.zip ]; then
+          echo "Error: File not downloaded or empty"
+          ls -la
+          exit 1
+        fi
+        
+        echo "File downloaded successfully, size: $(du -h nodejs-mobile.zip | cut -f1)"
+        echo "Extracting..."
         unzip -q nodejs-mobile.zip
         
         echo "Listing extracted contents:"
@@ -59,12 +82,22 @@ jobs:
         mkdir -p app/libnode/bin/arm64-v8a
         mkdir -p app/libnode/bin/x86_64
         
-        echo "Copying libnode.so files..."
-        cp nodejs-mobile-temp/nodejs-mobile-v18.20.4-android/bin/armeabi-v7a/libnode.so app/libnode/bin/armeabi-v7a/ || echo "Note: armeabi-v7a may not be available"
-        cp nodejs-mobile-temp/nodejs-mobile-v18.20.4-android/bin/arm64-v8a/libnode.so app/libnode/bin/arm64-v8a/
-        cp nodejs-mobile-temp/nodejs-mobile-v18.20.4-android/bin/x86_64/libnode.so app/libnode/bin/x86_64/ || echo "Note: x86_64 may not be available"
+        echo "Finding extracted directory..."
+        EXTRACTED_DIR=$(find nodejs-mobile-temp -maxdepth 1 -type d -name "nodejs-mobile-*-android" | head -1)
+        echo "Extracted directory: $EXTRACTED_DIR"
         
-        echo "Verifying copied files..."
+        if [ -z "$EXTRACTED_DIR" ]; then
+          echo "Error: Could not find extracted directory"
+          ls -la nodejs-mobile-temp/
+          exit 1
+        fi
+        
+        echo "Copying libnode.so files..."
+        cp "$EXTRACTED_DIR/bin/armeabi-v7a/libnode.so" app/libnode/bin/armeabi-v7a/ 2>/dev/null || echo "Note: armeabi-v7a not found"
+        cp "$EXTRACTED_DIR/bin/arm64-v8a/libnode.so" app/libnode/bin/arm64-v8a/
+        cp "$EXTRACTED_DIR/bin/x86_64/libnode.so" app/libnode/bin/x86_64/ 2>/dev/null || echo "Note: x86_64 not found"
+        
+        echo "Verifying copied files:"
         ls -lh app/libnode/bin/*/libnode.so
         
         echo "nodejs-mobile libraries setup complete!"
@@ -100,10 +133,5 @@ jobs:
       run: |
         echo "✅ APK successfully built!"
         echo "📦 Size: $(du -h app/build/outputs/apk/debug/app-debug.apk | cut -f1)"
+        echo "📍 Location: app/build/outputs/apk/debug/app-debug.apk"
         ls -lh app/build/outputs/apk/debug/app-debug.apk
-    
-    - name: Show build error details
-      if: failure()
-      run: |
-        echo "Build failed, checking for error logs..."
-        find . -name "*.log" -type f -exec head -20 {} \; 2>/dev/null || true
